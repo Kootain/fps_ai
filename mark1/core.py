@@ -1,7 +1,7 @@
 # coding = utf-8
 import time
 from abc import ABC, abstractmethod
-from typing import List, Optional, Union, Dict, Any
+from typing import List, Optional, Union, Dict, Any, Callable
 from multiprocessing import Queue, JoinableQueue, Process, Event
 from queue import Full, Empty
 from util.util import cts
@@ -97,8 +97,6 @@ class Memory(BaseTiker):
         self.p:Optional[Process] = None
 
 
-
-
 # 核心逻辑钟，所有感知帧变化的组件都要注册在 Quartz 上，由 Quartz 在触发
 class Quartz(object):
     def __init__(self, fps=1000):
@@ -130,38 +128,94 @@ class InputObj(object):
         self.ts = ts
         self.data = data
 
+    def __repr__(self):
+        return f'{self.ts}, {self.data}'
+
 
 class Input(ABC):
-    def __init__(self):
+    def __init__(self, fps=100):
         self.q: Queue = Queue()
         self.stop_event: Optional[Event] = None
         self.p: Optional = None
+        self.fps = fps
 
+    @classmethod
     @abstractmethod
-    def do(self) -> Any:
+    def pull_input(cls) -> Any:
         pass
 
-    def loop(self):
-        logging.debug(f'[Input.{self.__class__.__name__}] start loop')
-        while not self.stop_event.is_set():
-            input_data = InputObj(self.do())
+    @abstractmethod
+    def on(self):
+        pass
+
+    @abstractmethod
+    def off(self):
+        pass
+
+    def push_input(self, data):
+        if not self.stop_event.is_set():
+            input_data = InputObj(data)
             self.q.put(input_data)
-        logging.debug(f'[Input.{self.__class__.__name__}] stop loop')
+
+    @classmethod
+    def loop(cls, q: Queue, stop_event: Event, pull_input: Callable, fps: int):
+        logging.debug(f'[Input.{cls.__name__}] start loop')
+        while not stop_event.is_set():
+            input_data = InputObj(pull_input())
+            q.put(input_data)
+            time.sleep(1/fps)
+        logging.debug(f'[Input.{cls.__name__}] stop loop')
 
     def start(self):
         self.stop_event = Event()
         self.q.empty()
-        self.p = Process(target=self.loop)
+        self.on()
+        self.p = Process(target=self.loop, args=(self.q, self.stop_event, self.pull_input, self.fps))
         self.p.start()
         logging.info(f'[Input.{self.__class__.__name__}] start running')
 
     def stop(self):
+        self.off()
         self.stop_event.set()
         # TODO: 检查进程退出状况
 
         logging.info(f'[Input.{self.__class__.__name__}] stop running.')
 
 
+from pynput import mouse
+
+
+class MouseInput(Input):
+
+    controller: mouse.Controller = mouse.Controller()
+
+    def __init__(self, fps=100):
+        super().__init__(fps=fps)
+        self.listener: Optional[mouse.Listener] = None
+
+    def on_move(self, x, y):
+        self.push_input(('move', x, y))
+
+    def on_click(self, x, y, button, pressed):
+        self.push_input(('click', x, y, button, pressed))
+
+    def on_scroll(self, x, y, dx, dy):
+        self.push_input(('scroll', x, y, dx, dy))
+
+    def on(self):
+        self.listener = mouse.Listener(
+            on_click=self.on_click,
+            on_scroll=self.on_scroll,
+            on_move=self.on_move,
+        )
+        self.listener.start()
+
+    def off(self):
+        self.listener.close()
+
+    @classmethod
+    def pull_input(cls) -> Any:
+        return 'move', *cls.controller.position
 
 
 # 所有输入都接入 InputHub
@@ -213,7 +267,9 @@ class Mark1(object):
 
 
 if __name__ == '__main__':
-    q = Quartz(100)
-    q.register(Memory())
-    q.start()
+    i = MouseInput(1)
+    i.start()
+
+    while True:
+        print(i.q.get())
 
