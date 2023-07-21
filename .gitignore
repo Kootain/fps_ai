@@ -2,3 +2,5 @@
 .idea/
 runs/
 venv/
+*.mp4
+*.pyc

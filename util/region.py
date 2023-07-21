@@ -38,6 +38,11 @@ class Rect(object):
         return f'({self.x},{self.y},{self.width},{self.height})'
 
 
+screen_width, screen_height = 2560, 1440
+grab_width, grab_height = 640, 640
+center_box = Box(int(screen_width / 2 - grab_width / 2), int(screen_height / 2 - grab_height / 2), int(screen_width / 2 + grab_width / 2), int(screen_height / 2 + grab_height / 2))
+
+
 if __name__ == '__main__':
     box = Box(1, 1, 5, 5)
     print(box.rect())
