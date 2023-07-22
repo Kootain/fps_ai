@@ -4,8 +4,7 @@ from abc import ABC, abstractmethod
 from typing import List, Optional, Union, Dict, Any, Callable
 from multiprocessing import Queue, JoinableQueue, Process, Event
 from queue import Full, Empty
-
-import dxcam
+import traceback
 
 from util.utils import cts
 import logging
@@ -176,15 +175,28 @@ class Input(ABC):
                 status.wait()
                 if finish.is_set():
                     break
-                input_data = InputObj(pull_input(pull_input_param), cls.__name__)
-                q.put(input_data)
+
+                try:
+                    input_data = InputObj(pull_input(pull_input_param), cls.__name__)
+                except BaseException as e:
+                    traceback.print_exc()
+                    continue
+
+                try:
+                    q.put(input_data)
+                except EOFError as e:
+                    if finish.is_set():
+                        continue
+                    raise e
+
                 time.sleep(1 / fps)
-        except BaseException as e:
-            logging.error(f'[Input.{cls.__name__}.Subprocess] exception {e} {type(e)}')
-        logging.info(f'[Input.{cls.__name__}.Subprocess] stop loop')
+        except KeyboardInterrupt as e:
+            pass
+        finally:
+            logging.info(f'[Input.{cls.__name__}.Subprocess] stop loop')
 
     def start(self):
-        if self.status.is_set():
+        if self.status.is_set() or self.finish.is_set():
             return
         self.q.empty()
         self.on()
@@ -196,7 +208,7 @@ class Input(ABC):
         logging.info(f'[Input.{self.__class__.__name__}] status: start')
 
     def stop(self):
-        if not self.status.is_set():
+        if not self.status.is_set() or self.finish.is_set():
             return
         self.off()
         self.status.clear()
@@ -205,7 +217,8 @@ class Input(ABC):
     def close(self):
         logging.info(f'[Input.{self.__class__.__name__}] closing...')
         self.finish.set()
-        self.status.clear()
+        self.status.set()   # 防止进程卡在 status.wait() 无法退出
+        self.off()
         self.q.put(EOFError('close'))
         self.q.close()
         self.p.join()
@@ -317,10 +330,16 @@ class InputHub(object):
     def _consume(self, name: str, q: Queue):
         logging.info(f'[InputHub.{name}.SubThread] input consumer start')
         while not self.finish.is_set():
-            e = q.get()
-            if isinstance(e, EOFError):
-                break
-            self.event_bus.put(e)
+            try:
+                e = q.get()
+                if isinstance(e, EOFError):
+                    break
+                self.event_bus.put(e)
+            except EOFError:
+                if self.finish.is_set():
+                    break
+                else:
+                    raise EOFError
         logging.info(f'[InputHub.{name}.SubThread] input consumer stop')
 
     def register(self, iinput_id: str, iinput: Input):
@@ -350,7 +369,7 @@ class InputHub(object):
             logging.info(f'[InputHub.{iinput_id}] closing consumer')
             t = self.inputs_consumer.get(iinput_id)
             t.join()
-            logging.info(f'[InputHub.{iinput_id}] consumer closed: {t.is_alive()}')
+            logging.info(f'[InputHub.{iinput_id}] consumer is_alive: {t.is_alive()}')
 
         self.event_bus.close()
 
