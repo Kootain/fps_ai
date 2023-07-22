@@ -11,7 +11,7 @@ class Box(object):
         self.botx = botx
         self.boty = boty
 
-    def rect(self):
+    def rect(self) -> Rect:
         return Rect(x=self.topx, y=self.topy, width=self.botx-self.topx, height=self.boty-self.topy)
 
     def tuple(self):
@@ -39,7 +39,7 @@ class Rect(object):
 
 
 screen_width, screen_height = 2560, 1440
-grab_width, grab_height = 640, 640
+grab_width, grab_height = 320, 320
 center_box = Box(int(screen_width / 2 - grab_width / 2), int(screen_height / 2 - grab_height / 2), int(screen_width / 2 + grab_width / 2), int(screen_height / 2 + grab_height / 2))
 
 

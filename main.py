@@ -35,21 +35,35 @@ if __name__ == '__main__':
     q = Queue()
     p = Process(target=draw, args=(q,))
     p.start()
+    from pynput import mouse
 
+    aim = False
+
+    def t(x, y, button, pressed):
+        global aim
+        if button == mouse.Button.right:
+            if pressed:
+                aim = True
+            else:
+                aim = False
+
+    mouse.Listener(on_click=t).start()
     while True:
-
+        if not aim:
+            time.sleep(0.001)
+            continue
         img = frame(box=center_box)
         if img is None:
             continue
         result = detect(img)
-        filter_target(result, ['person'])
-        boxes = results2boxes(result, center_box)
-        q.put(boxes)
+        # filter_target(result, ['person'])
+        # boxes = results2boxes(result, center_box)
+        # q.put(boxes)
         # print_results(img, result)
         # draw_fps(img, fps.fps())
         # cv2.imshow('plugin', img)
         # cv2.waitKey(1)
-        fps.frame()
+        # fps.frame()
 
 
 

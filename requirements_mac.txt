@@ -3,5 +3,6 @@ torch
 torchvision
 torchaudio
 pyautogui
+pynput
 
 mss

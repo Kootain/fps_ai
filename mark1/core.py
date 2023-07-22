@@ -4,8 +4,13 @@ from abc import ABC, abstractmethod
 from typing import List, Optional, Union, Dict, Any, Callable
 from multiprocessing import Queue, JoinableQueue, Process, Event
 from queue import Full, Empty
+
+import dxcam
+
 from util.utils import cts
 import logging
+
+logging.basicConfig(format='%(asctime)s - %(levelname)s - %(message)s - at line %(lineno)d', level=logging.INFO)
 
 
 class FrameAwareable(ABC):
@@ -94,7 +99,7 @@ class Memory(BaseTiker):
         self.tmp = 0
         self.input_q = input_q
         self.stop = Event()
-        self.p:Optional[Process] = None
+        self.p: Optional[Process] = None
 
 
 # 核心逻辑钟，所有感知帧变化的组件都要注册在 Quartz 上，由 Quartz 在触发
@@ -122,26 +127,32 @@ class Quartz(object):
 
 
 class InputObj(object):
-    def __init__(self, data: Any, ts: Optional[int]=None):
+    def __init__(self, data: Any, event_type: str, ts: Optional[int] = None):
         if ts is None:
             ts = cts()
         self.ts = ts
+        self.event_type = event_type
         self.data = data
 
     def __repr__(self):
-        return f'{self.ts}, {self.data}'
+        return f'{self.ts}, {self.event_type}, {self.data}'
 
 
 class Input(ABC):
     def __init__(self, fps=100):
         self.q: Queue = Queue()
-        self.stop_event: Optional[Event] = None
-        self.p: Optional = None
+        self.status: Event = Event()
+        self.p: Optional[Process] = None
         self.fps = fps
+        self.finish = Event()
+
+    @abstractmethod
+    def pull_input_param(self) -> Any:
+        pass
 
     @classmethod
     @abstractmethod
-    def pull_input(cls) -> Any:
+    def pull_input(cls, param) -> Any:
         pass
 
     @abstractmethod
@@ -153,45 +164,64 @@ class Input(ABC):
         pass
 
     def push_input(self, data):
-        if not self.stop_event.is_set():
-            input_data = InputObj(data)
+        if self.status.is_set():
+            input_data = InputObj(data, self.__class__.__name__)
             self.q.put(input_data)
 
     @classmethod
-    def loop(cls, q: Queue, stop_event: Event, pull_input: Callable, fps: int):
-        logging.debug(f'[Input.{cls.__name__}] start loop')
-        while not stop_event.is_set():
-            input_data = InputObj(pull_input())
-            q.put(input_data)
-            time.sleep(1/fps)
-        logging.debug(f'[Input.{cls.__name__}] stop loop')
+    def loop(cls, q: Queue, status: Event, finish: Event, fps: int, pull_input: Callable, pull_input_param: Any):
+        logging.info(f'[Input.{cls.__name__}.Subprocess] start loop')
+        try:
+            while not finish.is_set():
+                status.wait()
+                if finish.is_set():
+                    break
+                input_data = InputObj(pull_input(pull_input_param), cls.__name__)
+                q.put(input_data)
+                time.sleep(1 / fps)
+        except BaseException as e:
+            logging.error(f'[Input.{cls.__name__}.Subprocess] exception {e} {type(e)}')
+        logging.info(f'[Input.{cls.__name__}.Subprocess] stop loop')
 
     def start(self):
-        self.stop_event = Event()
+        if self.status.is_set():
+            return
         self.q.empty()
         self.on()
-        self.p = Process(target=self.loop, args=(self.q, self.stop_event, self.pull_input, self.fps))
-        self.p.start()
-        logging.info(f'[Input.{self.__class__.__name__}] start running')
+        self.status.set()
+        if self.fps > 0 and self.p is None:
+            self.p = Process(target=self.loop, args=(self.q, self.status, self.finish, self.fps, self.pull_input,
+                                                     self.pull_input_param()))
+            self.p.start()
+        logging.info(f'[Input.{self.__class__.__name__}] status: start')
 
     def stop(self):
+        if not self.status.is_set():
+            return
         self.off()
-        self.stop_event.set()
-        # TODO: 检查进程退出状况
+        self.status.clear()
+        logging.info(f'[Input.{self.__class__.__name__}] status: pause')
 
-        logging.info(f'[Input.{self.__class__.__name__}] stop running.')
+    def close(self):
+        logging.info(f'[Input.{self.__class__.__name__}] closing...')
+        self.finish.set()
+        self.status.clear()
+        self.q.put(EOFError('close'))
+        self.q.close()
+        self.p.join()
+        logging.info(f'[Input.{self.__class__.__name__}] closed')
 
 
 from pynput import mouse
 
 
 class MouseInput(Input):
-
     controller: mouse.Controller = mouse.Controller()
 
     def __init__(self, fps=100):
         super().__init__(fps=fps)
         self.listener: Optional[mouse.Listener] = None
+        self.position_pull = fps > 0
 
     def on_move(self, x, y):
         self.push_input(('move', x, y))
@@ -206,16 +236,72 @@ class MouseInput(Input):
         self.listener = mouse.Listener(
             on_click=self.on_click,
             on_scroll=self.on_scroll,
-            on_move=self.on_move,
         )
+        if not self.position_pull:
+            self.listener.on_move = self.on_move
         self.listener.start()
 
     def off(self):
-        self.listener.close()
+        self.listener.stop()
 
     @classmethod
-    def pull_input(cls) -> Any:
-        return 'move', *cls.controller.position
+    def pull_input(cls, param) -> Any:
+        return 'move', cls.controller.position
+
+    def pull_input_param(self) -> Any:
+        pass
+
+
+from util.platform import is_mac, is_windows
+from util.region import Box
+
+if is_mac():
+    from mss import mss
+    import numpy as np
+if is_windows():
+    import dxcam
+
+
+class ScreenInput(Input):
+
+    def __init__(self, fps: int, region: Optional[Box] = None):
+        super().__init__(fps)
+        self.region = region
+
+    if is_windows():
+        win_camera = dxcam.create(output_color="BGR")
+
+        @classmethod
+        def frame(cls, region: Optional[Box] = None):
+            if region:
+                return cls.win_camera.grab(region=region.tuple())
+            return cls.win_camera.grab()
+
+    if is_mac():
+        mac_camera = mss()
+
+        @classmethod
+        def frame(cls, region: Optional[Box] = None):
+            if region:
+                img = np.array(cls.mac_camera.grab(region.rect().tuple()))[:, :, :3]
+                return np.ascontiguousarray(img)
+
+    def pull_input_param(self) -> Optional[Box]:
+        return self.region
+
+    @classmethod
+    def pull_input(cls, param: Optional[Box]) -> Any:
+        return cls.frame(param)
+
+    def on(self):
+        pass
+
+    def off(self):
+        pass
+
+
+import select
+from threading import Thread
 
 
 # 所有输入都接入 InputHub
@@ -224,12 +310,68 @@ class InputHub(object):
         super().__init__()
         self.queue: Queue = Queue()
         self.inputs: Dict[str, Input] = {}
-        self.buffer = []
+        self.inputs_consumer: Dict[str, Thread] = {}
+        self.event_bus: Queue = Queue()
+        self.finish: Event = Event()
+
+    def _consume(self, name: str, q: Queue):
+        logging.info(f'[InputHub.{name}.SubThread] input consumer start')
+        while not self.finish.is_set():
+            e = q.get()
+            if isinstance(e, EOFError):
+                break
+            self.event_bus.put(e)
+        logging.info(f'[InputHub.{name}.SubThread] input consumer stop')
 
     def register(self, iinput_id: str, iinput: Input):
         if self.inputs.get(iinput_id):
             raise Exception('input_id duplicated')
         self.inputs[iinput_id] = iinput
+        self.inputs_consumer[iinput_id] = Thread(target=self._consume, args=(iinput_id, iinput.q,))
+        self.inputs_consumer[iinput_id].start()
+
+    def get_input(self, iinput_id: str):
+        return self.inputs.get(iinput_id)
+
+    def start(self, iinput_id: str):
+        self.get_input(iinput_id).start()
+
+    def stop(self, iinput_id: str):
+        logging.debug(f'[InputHub] trying to stop {iinput_id}')
+        self.get_input(iinput_id).stop()
+
+    def close(self):
+        self.finish.set()
+        for iinput_id, iinput in self.inputs.items():
+            logging.info(f'[InputHub.{iinput_id}] closing producer')
+            iinput.close()
+            logging.info(f'[InputHub.{iinput_id}] producer closed: {iinput.p.is_alive()}')
+
+            logging.info(f'[InputHub.{iinput_id}] closing consumer')
+            t = self.inputs_consumer.get(iinput_id)
+            t.join()
+            logging.info(f'[InputHub.{iinput_id}] consumer closed: {t.is_alive()}')
+
+        self.event_bus.close()
+
+
+class Task(ABC):
+    def __init__(self, task_name: str, event_q: Queue, memory: Memory):
+        self.event_q: Queue = event_q
+        self.task_name = task_name
+        self.memory = memory
+
+    @abstractmethod
+    def task(self, event):
+        pass
+
+    @abstractmethod
+    def start(self):
+        pass
+
+    @abstractmethod
+    def stop(self):
+        pass
 
 
 class Mark1(object):
@@ -266,10 +408,35 @@ class Mark1(object):
         # 注册所有 logic
 
 
+import cv2
+
 if __name__ == '__main__':
-    i = MouseInput(1)
-    i.start()
+    from util.region import center_box
 
-    while True:
-        print(i.q.get())
+    input_mouse = MouseInput(1)
 
+    screen = ScreenInput(120, region=center_box)
+
+    hub = InputHub()
+    hub.register('mouse', input_mouse)
+    hub.register('screen', screen)
+
+    hub.start('mouse')
+    try:
+        while True:
+            event: InputObj = hub.event_bus.get()
+            if event.event_type == 'MouseInput':
+                if event.data[0] == 'click' and event.data[4]:
+                    hub.start('screen')
+
+                if event.data[0] == 'click' and not event.data[4]:
+                    hub.stop('screen')
+
+            if event.event_type == 'ScreenInput':
+                if event.data is None:
+                    continue
+                cv2.imshow('test', event.data)
+                cv2.waitKey(1)
+                time.sleep(0.01)
+    except (SystemExit, KeyboardInterrupt):
+        hub.close()

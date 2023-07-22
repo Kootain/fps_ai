@@ -2,5 +2,7 @@ ultralytics
 torch
 torchvision
 torchaudio
-dxcam
 pyautogui
+pynput
+
+dxcam
