@@ -1,20 +1,40 @@
+# coding_utf-8
+
 import time
 
-from pynput import mouse
+import cv2
 
-def on_move(x, y):
-    print('{1} Pointer moved to {0}'.format(
-        (x, y), time.time()))
-
-def on_click(x, y, button, pressed):
-    print('{3} {0} at {1} {2}'.format(
-        'Pressed' if pressed else 'Released',
-        (x, y), button, time.time()))
+from .device_mouse.inout_put import MouseInput
+from .device_screen.inout_put import ScreenInput
+from .input import InputHub, InputObj
 
 if __name__ == '__main__':
+    from util.region import center_box
 
-    # Collect events until released
-    with mouse.Listener(
-            on_move=on_move,
-            on_click=on_click) as listener:
-        listener.join()
+    input_mouse = MouseInput(1)
+
+    screen = ScreenInput(120, region=center_box)
+
+    hub = InputHub()
+    hub.register('mouse', input_mouse)
+    hub.register('screen', screen)
+
+    hub.start('mouse')
+    try:
+        while True:
+            event: InputObj = hub.event_bus.get()
+            if event.event_type == 'MouseInput':
+                if event.data[0] == 'click' and event.data[4]:
+                    hub.start('screen')
+
+                if event.data[0] == 'click' and not event.data[4]:
+                    hub.stop('screen')
+
+            if event.event_type == 'ScreenInput':
+                if event.data is None:
+                    continue
+                cv2.imshow('test', event.data)
+                cv2.waitKey(1)
+                time.sleep(0.01)
+    except (SystemExit, KeyboardInterrupt):
+        hub.close()
