@@ -41,3 +41,6 @@ class MouseInput(Input):
 
     def pull_input_param(self) -> Any:
         pass
+
+    def close(self):
+        super().close()

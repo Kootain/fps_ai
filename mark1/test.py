@@ -7,19 +7,23 @@ import cv2
 from .device_mouse.inout_put import MouseInput
 from .device_screen.inout_put import ScreenInput
 from .input import InputHub, InputObj
+from .job import PoseDetectJob
 
 if __name__ == '__main__':
     from util.region import center_box
 
     input_mouse = MouseInput(1)
 
-    screen = ScreenInput(120, region=center_box)
+    screen = ScreenInput(20, region=center_box)
 
     hub = InputHub()
     hub.register('mouse', input_mouse)
     hub.register('screen', screen)
 
     hub.start('mouse')
+    job = PoseDetectJob()
+    job.init_pose()
+
     try:
         while True:
             event: InputObj = hub.event_bus.get()
@@ -33,8 +37,10 @@ if __name__ == '__main__':
             if event.event_type == 'ScreenInput':
                 if event.data is None:
                     continue
-                cv2.imshow('test', event.data)
-                cv2.waitKey(1)
-                time.sleep(0.01)
+
+                # result = job.q.put(event.data)
+                job.run(event.data)
+
+
     except (SystemExit, KeyboardInterrupt):
         hub.close()

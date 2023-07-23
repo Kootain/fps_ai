@@ -48,3 +48,11 @@ class ScreenInput(Input):
 
     def off(self):
         pass
+
+    def close(self):
+        super().close()
+        if is_windows():
+            self.win_camera.release()
+
+        if is_mac():
+            self.mac_camera.close()
