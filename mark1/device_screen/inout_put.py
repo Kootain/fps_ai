@@ -56,3 +56,7 @@ class ScreenInput(Input):
 
         if is_mac():
             self.mac_camera.close()
+
+
+class ScreenOutput(object):
+    pass

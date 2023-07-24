@@ -1,7 +1,9 @@
 # coding=utf-8
 
 from pynput import mouse
+from pynput.mouse import Button
 from typing import Any, Optional
+import interception
 
 from ..input import Input
 
@@ -44,3 +46,11 @@ class MouseInput(Input):
 
     def close(self):
         super().close()
+
+
+class MouseOutput(object):
+    def __init__(self):
+        pass
+
+    def move(self, x, y):
+        interception.move_relative(x, y)

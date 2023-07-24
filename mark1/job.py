@@ -48,7 +48,10 @@ class YoloPose(object):
         idxs = self.yolo_pose_config.get(obj_name)
         if not idxs:
             raise ValueError(f'unknown body part {obj_name}')
-        return [self.data[i][j] for j in idxs]
+        try:
+            return [self.data[i][j] for j in idxs]
+        except:
+            return None
 
 
 def yolo2pose(keypoints: Keypoints) -> torch.Tensor:
@@ -164,3 +167,4 @@ class PoseDetectJob(BaseTiker):
         image = results[0].plot()
         cv2.imshow('test', image)
         cv2.waitKey(1)
+        return results
