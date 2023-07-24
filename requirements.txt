@@ -1,5 +1,11 @@
-ultralytics
-torch
+ultralytics~=8.0.137
+torch~=2.0.1
 torchvision
 torchaudio
-dxcam
+pyautogui
+pynput~=1.7.6
+dxcam~=0.0.5
+opencv-python~=4.7.0.72
+numpy~=1.23.5
+mss~=9.0.1
+colorlog~=5.0.1

@@ -1,5 +1,0 @@
-ultralytics
-torch
-torchvision
-torchaudio
-mss
