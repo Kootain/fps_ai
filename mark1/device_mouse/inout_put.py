@@ -3,7 +3,11 @@
 from pynput import mouse
 from pynput.mouse import Button
 from typing import Any, Optional
-import interception
+from util.platform import is_mac, is_windows
+if is_windows():
+    import interception
+if is_mac():
+    import pyautogui
 
 from ..input import Input
 
@@ -53,4 +57,7 @@ class MouseOutput(object):
         pass
 
     def move(self, x, y):
-        interception.move_relative(x, y)
+        if is_windows():
+            interception.move_relative(x, y)
+        if is_mac():
+            pyautogui.move(x, y)
